@@ -5,15 +5,14 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>com.example</groupId>
-    <artifactId>Guilds</artifactId>
+    <artifactId>GuildPlugin</artifactId>
     <version>1.0.0</version>
     <packaging>jar</packaging>
-    <name>Guilds</name>
 
     <properties>
-        <!-- JDK 17 as requested. If your 1.8.8 server runs on Java 8, set this to 8
-             (the code only uses Java 8 compatible syntax). -->
-        <maven.compiler.release>17</maven.compiler.release>
+        <!-- Build with JDK 17, emit Java 8 bytecode (Minecraft 1.8.8 era servers run on Java 8).
+             If your server really runs on Java 17, you may set this to 17. -->
+        <maven.compiler.release>8</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
 
@@ -23,8 +22,8 @@
             <url>https://hub.spigotmc.org/nexus/content/repositories/snapshots/</url>
         </repository>
         <repository>
-            <id>sonatype-snapshots</id>
-            <url>https://oss.sonatype.org/content/repositories/snapshots</url>
+            <id>sonatype</id>
+            <url>https://oss.sonatype.org/content/repositories/snapshots/</url>
         </repository>
         <repository>
             <id>placeholderapi</id>
@@ -38,31 +37,17 @@
             <artifactId>spigot-api</artifactId>
             <version>1.8.8-R0.1-SNAPSHOT</version>
             <scope>provided</scope>
-            <exclusions>
-                <!-- bungeecord-chat 1.8-SNAPSHOT no longer exists in any repository -->
-                <exclusion>
-                    <groupId>net.md-5</groupId>
-                    <artifactId>bungeecord-chat</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency>
-        <!-- Compile-time only: the server already ships its own bungee chat classes. -->
-        <dependency>
-            <groupId>net.md-5</groupId>
-            <artifactId>bungeecord-chat</artifactId>
-            <version>1.16-R0.4</version>
-            <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>me.clip</groupId>
             <artifactId>placeholderapi</artifactId>
-            <version>2.11.6</version>
+            <version>2.10.9</version>
             <scope>provided</scope>
         </dependency>
     </dependencies>
 
     <build>
-        <finalName>Guilds</finalName>
+        <finalName>GuildPlugin</finalName>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

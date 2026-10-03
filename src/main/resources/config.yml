@@ -1,29 +1,37 @@
-# Guilds configuration
+# ---------------------------------------------------------------
+#  GuildPlugin configuration  (use & color codes, NO hex colors)
+# ---------------------------------------------------------------
+settings:
+  name-min: 3
+  name-max: 16
+  max-ranks: 10
+  invite-expire-seconds: 60
+  # true  = guild members do NOT produce the public "X joined the game" /
+  #         "X left the game" message. Only their guild sees
+  #         "Guild > X joined the Server!". Players without a guild are unaffected.
+  suppress-public-join-quit: true
 
-# Maximum number of members in one guild (including the Guild Master)
-max-members: 50
+formats:
+  guild-chat: "&2Guild > &f%player% &e[%rank%]&f: %message%"
+  member-join: "&2Guild > &a%player% &ejoined the Server!"
+  member-quit: "&2Guild > &a%player% &eleft the Server!"
 
-# Maximum number of custom ranks a guild may create (Officer and Member do not count)
-max-custom-ranks: 8
-
-# How long an invite stays valid, in seconds
-invite-expire-seconds: 60
-
-# How long a join request (/g join without an invite) stays valid, in seconds
-request-expire-seconds: 300
-
-# Require "/g disband confirm" after "/g disband"
-require-disband-confirmation: true
-
-# Tell guild members when a fellow member joins / leaves the server
-join-leave-messages: true
-
-# Guild chat format. Placeholders: {player} {rank} {guild} {message}
-guild-chat-format: "&2Guild > &b{player} &e[{rank}]&f: {message}"
-
-# Text returned by PlaceholderAPI when the player has no guild
 placeholders:
-  no-guild-name: ""
-  no-guild-rank: ""
-  no-guild-tag: ""
-  no-guild-master: ""
+  # What %guild_name%, %guild_rank%, ... return for players without a guild
+  no-guild: ""
+
+# ---------------------------------------------------------------
+#  Tab list / name tag prefix
+#  The Guild Master chooses the mode in the /g tab GUI.
+#  Available internal placeholders:  %guild_name%  %guild_rank%  %guild_color%
+#  Any PlaceholderAPI placeholder also works.
+#  NOTE: Minecraft 1.8 limits a tab prefix to 16 characters (color codes
+#  included). Guild name / rank are automatically shortened to fit.
+# ---------------------------------------------------------------
+tab:
+  enabled: true
+  formats:
+    NAME: "%guild_color%[%guild_name%] &f"
+    RANK: "%guild_color%[%guild_rank%] &f"
+    NAME_RANK: "%guild_color%[%guild_name%|%guild_rank%] &f"
+    NONE: ""

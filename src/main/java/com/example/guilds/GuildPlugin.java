@@ -1,13 +1,24 @@
 package com.example.guilds;
 
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.UUID;
+
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
-import org.bukkit.command.PluginCommand;
+import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 
 public class GuildPlugin extends JavaPlugin {
 
     private GuildManager guildManager;
+    private TabManager tabManager;
+    private GuiManager guiManager;
+    private boolean papi;
+
+    /** Players whose normal chat is redirected to guild chat (/g chat with no message). */
+    private final Set<UUID> chatToggled = Collections.synchronizedSet(new HashSet<UUID>());
 
     @Override
     public void onEnable() {
@@ -15,62 +26,81 @@ public class GuildPlugin extends JavaPlugin {
 
         guildManager = new GuildManager(this);
         guildManager.load();
+        tabManager = new TabManager(this);
+        guiManager = new GuiManager(this);
 
-        GuildCommand executor = new GuildCommand(this);
-        PluginCommand guild = getCommand("guild");
-        PluginCommand gc = getCommand("gc");
-        if (guild != null) {
-            guild.setExecutor(executor);
-            guild.setTabCompleter(executor);
-        }
-        if (gc != null) {
-            gc.setExecutor(executor);
-        }
+        GuildCommand cmd = new GuildCommand(this);
+        getCommand("guild").setExecutor(cmd);
+        getCommand("guild").setTabCompleter(cmd);
+        getCommand("gc").setExecutor(cmd);
 
-        getServer().getPluginManager().registerEvents(new GuildListener(this), this);
+        Bukkit.getPluginManager().registerEvents(new GuildListener(this), this);
+        Bukkit.getPluginManager().registerEvents(guiManager, this);
 
-        // Expire stale invites / join requests every 30 seconds
-        Bukkit.getScheduler().runTaskTimer(this, new Runnable() {
-            @Override
-            public void run() {
-                guildManager.cleanupExpired();
-            }
-        }, 600L, 600L);
+        hookPlaceholderApi();
 
-        if (Bukkit.getPluginManager().getPlugin("PlaceholderAPI") != null) {
-            hookPlaceholderAPI();
-        } else {
-            getLogger().info("PlaceholderAPI not found - %guild_...% placeholders are disabled.");
-        }
+        tabManager.purgeStale();
+        for (Player p : Bukkit.getOnlinePlayers()) tabManager.apply(p);
 
-        getLogger().info("Guilds enabled.");
-    }
-
-    /** Kept in its own method so PlaceholderAPI classes are only touched when the plugin exists. */
-    private void hookPlaceholderAPI() {
-        if (new GuildPlaceholders(this).register()) {
-            getLogger().info("Registered PlaceholderAPI expansion (%guild_...%).");
-        } else {
-            getLogger().warning("Could not register the PlaceholderAPI expansion.");
-        }
+        getLogger().info("GuildPlugin enabled" + (papi ? " (PlaceholderAPI hooked)." : "."));
     }
 
     @Override
     public void onDisable() {
-        if (guildManager != null) {
-            guildManager.saveNow();
+        if (guildManager != null) guildManager.save();
+        if (tabManager != null) tabManager.purgeStale();
+    }
+
+    private void hookPlaceholderApi() {
+        if (Bukkit.getPluginManager().getPlugin("PlaceholderAPI") == null) {
+            getLogger().info("PlaceholderAPI not found - placeholders disabled.");
+            return;
+        }
+        try {
+            papi = new GuildPlaceholders(this).register();
+        } catch (Throwable t) {
+            papi = false;
+            getLogger().warning("Could not hook PlaceholderAPI: " + t.getMessage());
         }
     }
 
-    public GuildManager getGuildManager() {
-        return guildManager;
+    // --------------------------------------------------------------- getters
+
+    public GuildManager getGuildManager() { return guildManager; }
+    public TabManager getTabManager() { return tabManager; }
+    public GuiManager getGuiManager() { return guiManager; }
+    public boolean hasPapi() { return papi; }
+    public Set<UUID> getChatToggled() { return chatToggled; }
+
+    // ------------------------------------------------------------- messaging
+
+    /** Sends an already colored message to every online member of the guild. */
+    public void broadcast(Guild g, String coloredMessage) {
+        for (UUID u : g.getMembers()) {
+            Player p = Bukkit.getPlayer(u);
+            if (p != null) p.sendMessage(coloredMessage);
+        }
     }
 
-    public int getMaxMembers() {
-        return Math.max(1, getConfig().getInt("max-members", 50));
+    public void broadcastExcept(Guild g, String coloredMessage, UUID except) {
+        for (UUID u : g.getMembers()) {
+            if (u.equals(except)) continue;
+            Player p = Bukkit.getPlayer(u);
+            if (p != null) p.sendMessage(coloredMessage);
+        }
     }
 
-    public static String color(String text) {
-        return ChatColor.translateAlternateColorCodes('&', text);
+    public void sendGuildChat(Player sender, String message) {
+        Guild g = guildManager.getGuild(sender.getUniqueId());
+        if (g == null) return;
+        String fmt = getConfig().getString("formats.guild-chat", "&2Guild > &f%player% &e[%rank%]&f: %message%");
+        String msg = sender.hasPermission("guild.chat.color") ? Msg.color(message) : message;
+        String out = Msg.color(fmt
+                .replace("%player%", sender.getName())
+                .replace("%rank%", g.getRank(sender.getUniqueId()))
+                .replace("%guild%", g.getName()))
+                .replace("%message%", msg);
+        broadcast(g, out);
+        getLogger().info("[GuildChat/" + g.getName() + "] " + ChatColor.stripColor(out));
     }
 }

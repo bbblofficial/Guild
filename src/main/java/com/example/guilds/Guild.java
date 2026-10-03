@@ -1,209 +1,135 @@
 package com.example.guilds;
 
-import org.bukkit.Bukkit;
-import org.bukkit.entity.Player;
+import java.util.*;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
-
-/**
- * A guild: a master, an ordered list of ranks (highest to lowest, excluding the master)
- * and a set of members.
- *
- * Rank hierarchy: "Guild Master" (level 0) > ranks.get(0) (level 1) > ranks.get(1) (level 2) ...
- * The list always starts with "Officer" and always ends with "Member" (the default rank).
- * Custom ranks are inserted directly above "Member".
- */
+/** Data model of a single guild. */
 public class Guild {
 
     public static final String MASTER_RANK = "Guild Master";
-    public static final String OFFICER_RANK = "Officer";
-    public static final String DEFAULT_RANK = "Member";
+    public static final String OFFICER = "Officer";
+    public static final String MEMBER = "Member";
 
     private final String name;
-    private final long created;
     private UUID master;
-    private final List<String> ranks = new ArrayList<String>();
-    private final Map<UUID, GuildMember> members = new LinkedHashMap<UUID, GuildMember>();
+    private char color = 'a';
+    private TabMode tabMode = TabMode.NAME;
+    private final long created;
 
-    public Guild(String name, long created) {
+    /** member -> rank name (the master has MASTER_RANK) */
+    private final Map<UUID, String> memberRanks = new LinkedHashMap<>();
+    /** member -> last known name (so offline members can be listed / managed) */
+    private final Map<UUID, String> memberNames = new HashMap<>();
+    /** rank hierarchy, highest -> lowest, WITHOUT the Guild Master */
+    private final List<String> ranks = new ArrayList<>();
+
+    public Guild(String name, UUID master, String masterName, long created) {
         this.name = name;
-        this.created = created;
-        ranks.add(OFFICER_RANK);
-        ranks.add(DEFAULT_RANK);
-    }
-
-    // ------------------------------------------------------------------ basics
-
-    public String getName() {
-        return name;
-    }
-
-    public long getCreated() {
-        return created;
-    }
-
-    public UUID getMaster() {
-        return master;
-    }
-
-    public void setMaster(UUID master) {
         this.master = master;
+        this.created = created;
+        ranks.add(OFFICER);
+        ranks.add(MEMBER);
+        memberRanks.put(master, MASTER_RANK);
+        memberNames.put(master, masterName);
     }
 
-    public GuildMember getMasterMember() {
-        return master == null ? null : members.get(master);
+    // ---------------------------------------------------------------- basic
+
+    public String getName() { return name; }
+    public UUID getMaster() { return master; }
+    public boolean isMaster(UUID u) { return master.equals(u); }
+    public long getCreated() { return created; }
+
+    public char getColor() { return color; }
+    public void setColor(char c) { this.color = Character.toLowerCase(c); }
+
+    public TabMode getTabMode() { return tabMode; }
+    public void setTabMode(TabMode m) { this.tabMode = m; }
+
+    // -------------------------------------------------------------- members
+
+    public Set<UUID> getMembers() { return Collections.unmodifiableSet(memberRanks.keySet()); }
+    public int size() { return memberRanks.size(); }
+    public boolean isMember(UUID u) { return memberRanks.containsKey(u); }
+
+    public void addMember(UUID u, String playerName, String rank) {
+        if (!MASTER_RANK.equals(rank) && !ranks.contains(rank)) rank = MEMBER;
+        memberRanks.put(u, rank);
+        memberNames.put(u, playerName);
     }
 
-    // ------------------------------------------------------------------- ranks
-
-    /** Ranks below the master, highest first. */
-    public List<String> getRanks() {
-        return Collections.unmodifiableList(ranks);
+    public void removeMember(UUID u) {
+        memberRanks.remove(u);
+        memberNames.remove(u);
     }
 
-    public void setRanks(List<String> newRanks) {
-        ranks.clear();
-        ranks.addAll(newRanks);
+    public String getMemberName(UUID u) {
+        String n = memberNames.get(u);
+        return n == null ? u.toString().substring(0, 8) : n;
     }
 
-    public int indexOfRank(String rank) {
-        for (int i = 0; i < ranks.size(); i++) {
-            if (ranks.get(i).equalsIgnoreCase(rank)) {
-                return i;
-            }
-        }
-        return -1;
-    }
+    public void setMemberName(UUID u, String n) { memberNames.put(u, n); }
 
-    /** Returns the stored spelling of a rank (including the master rank), or null if it does not exist. */
-    public String canonicalRank(String rank) {
-        if (rank == null) {
-            return null;
-        }
-        if (MASTER_RANK.equalsIgnoreCase(rank)) {
-            return MASTER_RANK;
-        }
-        int idx = indexOfRank(rank);
-        return idx < 0 ? null : ranks.get(idx);
-    }
-
-    public boolean isCustomRank(String rank) {
-        return indexOfRank(rank) >= 0
-                && !OFFICER_RANK.equalsIgnoreCase(rank)
-                && !DEFAULT_RANK.equalsIgnoreCase(rank);
-    }
-
-    public int getCustomRankCount() {
-        return Math.max(0, ranks.size() - 2);
-    }
-
-    /** Adds a custom rank directly above the default rank. Returns false if the name is taken. */
-    public boolean addRank(String rank) {
-        if (canonicalRank(rank) != null) {
-            return false;
-        }
-        ranks.add(ranks.size() - 1, rank);
-        return true;
-    }
-
-    /** Removes a custom rank and moves everyone who had it to the default rank. Returns how many were moved. */
-    public int removeRank(String rank) {
-        int idx = indexOfRank(rank);
-        if (idx < 0) {
-            return 0;
-        }
-        String stored = ranks.remove(idx);
-        int moved = 0;
-        for (GuildMember m : members.values()) {
-            if (m.getRank().equalsIgnoreCase(stored)) {
-                m.setRank(DEFAULT_RANK);
-                moved++;
-            }
-        }
-        return moved;
-    }
-
-    /** 0 = master, 1 = highest custom/officer rank, ... Lower number = more power. */
-    public int getLevel(String rank) {
-        if (MASTER_RANK.equalsIgnoreCase(rank)) {
-            return 0;
-        }
-        int idx = indexOfRank(rank);
-        return idx < 0 ? ranks.size() : idx + 1;
-    }
-
-    public int getLevel(UUID uuid) {
-        GuildMember m = members.get(uuid);
-        return m == null ? Integer.MAX_VALUE : getLevel(m.getRank());
-    }
-
-    /** The rank one step above the given one, or null if there is none below the master. */
-    public String higherRank(String rank) {
-        int idx = indexOfRank(rank);
-        return idx <= 0 ? null : ranks.get(idx - 1);
-    }
-
-    /** The rank one step below the given one, or null if it is already the lowest. */
-    public String lowerRank(String rank) {
-        int idx = indexOfRank(rank);
-        return (idx < 0 || idx >= ranks.size() - 1) ? null : ranks.get(idx + 1);
-    }
-
-    // ----------------------------------------------------------------- members
-
-    public Collection<GuildMember> getMembers() {
-        return members.values();
-    }
-
-    public int size() {
-        return members.size();
-    }
-
-    public GuildMember getMember(UUID uuid) {
-        return members.get(uuid);
-    }
-
-    public GuildMember getMemberByName(String name) {
-        for (GuildMember m : members.values()) {
-            if (m.getName().equalsIgnoreCase(name)) {
-                return m;
-            }
+    public UUID findMember(String playerName) {
+        for (Map.Entry<UUID, String> e : memberNames.entrySet()) {
+            if (e.getValue().equalsIgnoreCase(playerName) && memberRanks.containsKey(e.getKey())) return e.getKey();
         }
         return null;
     }
 
-    public void addMember(GuildMember member) {
-        members.put(member.getUuid(), member);
+    // ---------------------------------------------------------------- ranks
+
+    public String getRank(UUID u) {
+        String r = memberRanks.get(u);
+        return r == null ? MEMBER : r;
     }
 
-    public void removeMember(UUID uuid) {
-        members.remove(uuid);
+    public void setRank(UUID u, String rank) { memberRanks.put(u, rank); }
+
+    /** -1 for the master, 0 = highest normal rank ... size-1 = lowest rank. */
+    public int rankIndex(UUID u) {
+        String r = getRank(u);
+        if (MASTER_RANK.equals(r)) return -1;
+        int i = ranks.indexOf(r);
+        return i < 0 ? ranks.size() - 1 : i;
     }
 
-    public boolean isMaster(UUID uuid) {
-        return master != null && master.equals(uuid);
+    public List<String> getRanks() { return Collections.unmodifiableList(ranks); }
+
+    public void setRanks(List<String> list) {
+        ranks.clear();
+        ranks.addAll(list);
+        if (!ranks.contains(OFFICER)) ranks.add(0, OFFICER);
+        if (!ranks.contains(MEMBER)) ranks.add(MEMBER);
     }
 
-    // ------------------------------------------------------------------ online
+    /** Returns the canonical rank name (case-insensitive lookup) or null. */
+    public String findRank(String n) {
+        for (String r : ranks) if (r.equalsIgnoreCase(n)) return r;
+        if (MASTER_RANK.equalsIgnoreCase(n)) return MASTER_RANK;
+        return null;
+    }
 
-    public List<Player> getOnlinePlayers() {
-        List<Player> online = new ArrayList<Player>();
-        for (UUID uuid : members.keySet()) {
-            Player p = Bukkit.getPlayer(uuid);
-            if (p != null && p.isOnline()) {
-                online.add(p);
-            }
+    public static boolean isDefaultRank(String r) {
+        return MASTER_RANK.equals(r) || OFFICER.equals(r) || MEMBER.equals(r);
+    }
+
+    /** New ranks are inserted directly above "Member". */
+    public void addRank(String n) {
+        int idx = ranks.indexOf(MEMBER);
+        if (idx < 0) idx = ranks.size();
+        ranks.add(idx, n);
+    }
+
+    public void removeRank(String n) {
+        ranks.remove(n);
+        for (Map.Entry<UUID, String> e : memberRanks.entrySet()) {
+            if (e.getValue().equals(n)) e.setValue(MEMBER);
         }
-        return online;
     }
 
-    public int getOnlineCount() {
-        return getOnlinePlayers().size();
+    public void transferMaster(UUID newMaster) {
+        memberRanks.put(master, OFFICER);
+        master = newMaster;
+        memberRanks.put(newMaster, MASTER_RANK);
     }
 }

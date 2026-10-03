@@ -1,834 +1,524 @@
 package com.example.guilds;
 
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+
 import net.md_5.bungee.api.chat.BaseComponent;
 import net.md_5.bungee.api.chat.ClickEvent;
 import net.md_5.bungee.api.chat.HoverEvent;
 import net.md_5.bungee.api.chat.TextComponent;
 import org.bukkit.Bukkit;
-import org.bukkit.ChatColor;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
 import org.bukkit.entity.Player;
 
-import java.text.SimpleDateFormat;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.UUID;
-import java.util.regex.Pattern;
-
-/** Handles /guild (alias /g) and /gc. */
+/** Handles /guild (/g) and /gc. */
 public class GuildCommand implements CommandExecutor, TabCompleter {
 
-    private static final Pattern GUILD_NAME = Pattern.compile("^[A-Za-z0-9]{3,16}$");
-    private static final Pattern RANK_NAME = Pattern.compile("^[A-Za-z0-9]{1,16}$");
-    private static final String LINE = "&9&m-----------------------------------------------------";
-    private static final String DOT = "●";
-
-    private static final List<String> SUBCOMMANDS = Arrays.asList(
-            "help", "create", "disband", "invite", "join", "chat", "createrank", "deleterank",
-            "promote", "demote", "leave", "kick", "list", "info", "transfer");
+    private static final List<String> SUBS = Arrays.asList(
+            "create", "disband", "invite", "join", "accept", "chat", "createrank", "deleterank", "ranks",
+            "promote", "demote", "leave", "kick", "list", "info", "transfer", "color", "tab", "help");
 
     private final GuildPlugin plugin;
     private final GuildManager gm;
-    private final Map<UUID, Long> pendingDisband = new HashMap<UUID, Long>();
+    private final Map<UUID, Long> disbandConfirm = new HashMap<>();
 
     public GuildCommand(GuildPlugin plugin) {
         this.plugin = plugin;
         this.gm = plugin.getGuildManager();
     }
 
-    // ===================================================================== entry
+    // ------------------------------------------------------------ dispatcher
 
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
-        // /gc <message>
-        if (cmd.getName().equalsIgnoreCase("gc")) {
-            if (!(sender instanceof Player)) {
-                err(sender, "Only players can use guild chat.");
-                return true;
-            }
-            Player p = (Player) sender;
-            if (!p.hasPermission("guild.use")) {
-                err(p, "You don't have permission to do that.");
-                return true;
-            }
-            chat(p, args, 0);
-            return true;
-        }
-
-        // console-friendly admin command
-        if (args.length > 0 && args[0].equalsIgnoreCase("admindisband")) {
-            adminDisband(sender, args);
-            return true;
-        }
-
         if (!(sender instanceof Player)) {
-            err(sender, "Only players can use guild commands.");
+            sender.sendMessage("Only players can use guild commands.");
             return true;
         }
         Player p = (Player) sender;
-        if (!p.hasPermission("guild.use")) {
-            err(p, "You don't have permission to do that.");
+
+        if (cmd.getName().equalsIgnoreCase("gc")) {
+            chat(p, args, 0);
             return true;
         }
+        if (args.length == 0) { help(p); return true; }
 
-        if (args.length == 0) {
-            help(p);
-            return true;
-        }
-
-        String sub = args[0].toLowerCase(Locale.ROOT);
-        switch (sub) {
-            case "help":
-            case "?":
-                help(p);
-                break;
-            case "create":
-                create(p, args);
-                break;
-            case "disband":
-                disband(p, args);
-                break;
-            case "invite":
-                invite(p, args);
-                break;
-            case "join":
-            case "accept":
-                join(p, args);
-                break;
-            case "chat":
-                chat(p, args, 1);
-                break;
-            case "createrank":
-                createRank(p, args);
-                break;
-            case "deleterank":
-                deleteRank(p, args);
-                break;
-            case "promote":
-                changeRank(p, args, true);
-                break;
-            case "demote":
-                changeRank(p, args, false);
-                break;
-            case "leave":
-                leave(p);
-                break;
-            case "kick":
-                kick(p, args);
-                break;
-            case "list":
-                list(p);
-                break;
-            case "info":
-                info(p, args);
-                break;
-            case "transfer":
-                transfer(p, args);
-                break;
-            default:
-                err(p, "Unknown sub-command. Type /g help for a list of commands.");
-                break;
+        switch (args[0].toLowerCase()) {
+            case "create": create(p, args); break;
+            case "disband": disband(p); break;
+            case "invite": invite(p, args); break;
+            case "join": join(p, args); break;
+            case "accept": accept(p, args); break;
+            case "chat": case "c": chat(p, args, 1); break;
+            case "createrank": createRank(p, args); break;
+            case "deleterank": deleteRank(p, args); break;
+            case "ranks": ranks(p); break;
+            case "promote": moveRank(p, args, true); break;
+            case "demote": moveRank(p, args, false); break;
+            case "leave": leave(p); break;
+            case "kick": kick(p, args); break;
+            case "list": case "members": list(p); break;
+            case "info": info(p); break;
+            case "transfer": transfer(p, args); break;
+            case "color": case "colour": openGui(p, true); break;
+            case "tab": openGui(p, false); break;
+            case "help": help(p); break;
+            default: Msg.error(p, "Unknown sub-command. Use /g help."); break;
         }
         return true;
     }
 
-    // ==================================================================== create
+    // --------------------------------------------------------------- helpers
+
+    private Guild need(Player p) {
+        Guild g = gm.getGuild(p.getUniqueId());
+        if (g == null) Msg.error(p, "You are not in a guild!");
+        return g;
+    }
+
+    private boolean canManage(Guild g, Player p) {
+        UUID u = p.getUniqueId();
+        return g.isMaster(u) || Guild.OFFICER.equals(g.getRank(u));
+    }
+
+    private long ttl() {
+        return plugin.getConfig().getInt("settings.invite-expire-seconds", 60) * 1000L;
+    }
+
+    private void addToGuild(Guild g, Player p) {
+        gm.clearInvites(p.getUniqueId());
+        gm.clearRequests(p.getUniqueId());
+        gm.addMember(g, p.getUniqueId(), p.getName());
+        gm.save();
+        plugin.getTabManager().apply(p);
+        plugin.broadcast(g, Msg.color(Msg.PREFIX + "&a" + p.getName() + " &ejoined the guild!"));
+    }
+
+    private void clickable(Player to, String text, String command, String hover) {
+        TextComponent c = new TextComponent(Msg.color(text));
+        c.setClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, command));
+        c.setHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT,
+                new BaseComponent[]{new TextComponent(Msg.color(hover))}));
+        to.spigot().sendMessage(c);
+    }
+
+    // -------------------------------------------------------------- commands
+
+    private void help(Player p) {
+        Msg.send(p, Msg.line());
+        Msg.send(p, "&2Guild Commands");
+        String[][] h = {
+                {"create <name>", "Create a guild"},
+                {"invite <player>", "Invite a player"},
+                {"join <guild>", "Accept an invite / request to join"},
+                {"accept <player>", "Accept a join request"},
+                {"chat <message>", "Guild chat (no message = toggle)"},
+                {"list", "Members and online status"},
+                {"info", "Guild information"},
+                {"ranks", "Show the rank hierarchy"},
+                {"promote / demote <player>", "Change a member's rank (Master)"},
+                {"createrank / deleterank <name>", "Manage custom ranks (Master)"},
+                {"kick <player>", "Kick a member"},
+                {"transfer <player>", "Give the guild to a member (Master)"},
+                {"color", "Open the guild color GUI (Master)"},
+                {"tab", "Open the tab settings GUI (Master)"},
+                {"leave", "Leave your guild"},
+                {"disband", "Disband your guild (Master)"},
+        };
+        for (String[] x : h) Msg.send(p, "&e/g " + x[0] + " &7- &f" + x[1]);
+        Msg.send(p, "&e/gc <message> &7- &fSend a guild chat message");
+        Msg.send(p, Msg.line());
+    }
 
     private void create(Player p, String[] a) {
-        if (!p.hasPermission("guild.create")) {
-            err(p, "You don't have permission to create a guild.");
-            return;
-        }
-        if (a.length < 2) {
-            err(p, "Usage: /g create <name>");
-            return;
-        }
-        if (gm.getGuildOf(p.getUniqueId()) != null) {
-            err(p, "You are already in a guild! Leave it first with /g leave.");
-            return;
-        }
+        if (!p.hasPermission("guild.create")) { Msg.error(p, "You don't have permission to create a guild."); return; }
+        if (a.length < 2) { Msg.error(p, "Usage: /g create <name>"); return; }
+        if (gm.getGuild(p.getUniqueId()) != null) { Msg.error(p, "You are already in a guild!"); return; }
+
+        int min = plugin.getConfig().getInt("settings.name-min", 3);
+        int max = plugin.getConfig().getInt("settings.name-max", 16);
         String name = a[1];
-        if (!GUILD_NAME.matcher(name).matches()) {
-            err(p, "Guild names must be 3-16 characters long and only contain letters and numbers.");
+        if (!name.matches("[A-Za-z0-9_]+") || name.length() < min || name.length() > max) {
+            Msg.error(p, "Guild names must be " + min + "-" + max + " characters (letters, numbers, underscore).");
             return;
         }
-        if (gm.getGuild(name) != null) {
-            err(p, "A guild named '" + name + "' already exists.");
-            return;
-        }
+        if (gm.exists(name)) { Msg.error(p, "A guild with that name already exists."); return; }
+
         Guild g = gm.createGuild(name, p);
-        send(p, LINE);
-        send(p, "&aYou created the guild &b" + g.getName() + "&a!");
-        send(p, "&7Invite players with &e/g invite <player>&7.");
-        send(p, LINE);
+        gm.save();
+        plugin.getTabManager().apply(p);
+
+        Msg.send(p, Msg.line());
+        Msg.send(p, "&aYou created the guild &6" + g.getName() + "&a!");
+        Msg.send(p, "&eUse &6/g color &eto pick a guild color and &6/g tab &eto choose the tab display.");
+        Msg.send(p, Msg.line());
     }
 
-    // =================================================================== disband
+    private void disband(Player p) {
+        Guild g = need(p);
+        if (g == null) return;
+        if (!g.isMaster(p.getUniqueId())) { Msg.error(p, "Only the Guild Master can disband the guild."); return; }
 
-    private void disband(Player p, String[] a) {
-        Guild g = requireGuild(p);
-        if (g == null || !requireMaster(p, g)) {
+        long now = System.currentTimeMillis();
+        Long t = disbandConfirm.get(p.getUniqueId());
+        if (t == null || now - t > 15000L) {
+            disbandConfirm.put(p.getUniqueId(), now);
+            Msg.send(p, "&eAre you sure? Type &c/g disband &eagain within 15 seconds to confirm.");
             return;
         }
+        disbandConfirm.remove(p.getUniqueId());
 
-        if (plugin.getConfig().getBoolean("require-disband-confirmation", true)) {
-            boolean confirm = a.length >= 2 && a[1].equalsIgnoreCase("confirm");
-            Long until = pendingDisband.get(p.getUniqueId());
-            long now = System.currentTimeMillis();
-            if (!confirm || until == null || until < now) {
-                pendingDisband.put(p.getUniqueId(), now + 15000L);
-                send(p, LINE);
-                send(p, "&cThis will permanently disband &b" + g.getName() + "&c and remove all " + g.size() + " member(s).");
-                send(p, "&eType &6/g disband confirm &ewithin 15 seconds to continue.");
-                send(p, LINE);
-                return;
-            }
-            pendingDisband.remove(p.getUniqueId());
-        }
-
-        List<Player> online = g.getOnlinePlayers();
-        String name = g.getName();
+        plugin.broadcast(g, Msg.color("&cThe guild &6" + g.getName() + " &cwas disbanded by " + p.getName() + "."));
+        List<UUID> members = new ArrayList<UUID>(g.getMembers());
         gm.disband(g);
-        for (Player member : online) {
-            if (member.getUniqueId().equals(p.getUniqueId())) {
-                send(member, "&aYou disbanded the guild &b" + name + "&a.");
-            } else {
-                send(member, "&2Guild > &cThe guild &b" + name + "&c was disbanded by &e" + p.getName() + "&c.");
-            }
+        gm.save();
+        for (UUID u : members) {
+            plugin.getChatToggled().remove(u);
+            Player m = Bukkit.getPlayer(u);
+            if (m != null) plugin.getTabManager().remove(m);
         }
     }
-
-    private void adminDisband(CommandSender s, String[] a) {
-        if (!s.hasPermission("guild.admin")) {
-            err(s, "You don't have permission to do that.");
-            return;
-        }
-        if (a.length < 2) {
-            err(s, "Usage: /g admindisband <guild>");
-            return;
-        }
-        Guild g = gm.getGuild(a[1]);
-        if (g == null) {
-            err(s, "No guild named '" + a[1] + "' exists.");
-            return;
-        }
-        List<Player> online = g.getOnlinePlayers();
-        String name = g.getName();
-        gm.disband(g);
-        for (Player member : online) {
-            send(member, "&2Guild > &cYour guild &b" + name + "&c was disbanded by an administrator.");
-        }
-        send(s, "&aDisbanded the guild &b" + name + "&a.");
-    }
-
-    // ==================================================================== invite
 
     private void invite(Player p, String[] a) {
-        Guild g = requireGuild(p);
-        if (g == null) {
-            return;
-        }
-        if (!isStaff(g, p.getUniqueId())) {
-            err(p, "Only the Guild Master and Officers can invite players.");
-            return;
-        }
-        if (a.length < 2) {
-            err(p, "Usage: /g invite <player>");
-            return;
-        }
-        Player target = Bukkit.getPlayerExact(a[1]);
-        if (target == null) {
-            err(p, "Player '" + a[1] + "' is not online.");
-            return;
-        }
-        if (target.getUniqueId().equals(p.getUniqueId())) {
-            err(p, "You can't invite yourself.");
-            return;
-        }
-        if (gm.getGuildOf(target.getUniqueId()) != null) {
-            err(p, target.getName() + " is already in a guild.");
-            return;
-        }
-        if (g.size() >= plugin.getMaxMembers()) {
-            err(p, "Your guild is full (" + plugin.getMaxMembers() + " members).");
-            return;
-        }
+        Guild g = need(p);
+        if (g == null) return;
+        if (!canManage(g, p)) { Msg.error(p, "You must be the Guild Master or an Officer to invite players."); return; }
+        if (a.length < 2) { Msg.error(p, "Usage: /g invite <player>"); return; }
 
-        // The target asked to join earlier -> inviting them accepts the request.
-        if (gm.consumeRequest(g, target.getUniqueId())) {
-            gm.addMember(g, target);
-            send(target, "&aYour request was accepted! You joined the guild &b" + g.getName() + "&a.");
-            broadcast(g, "&e" + target.getName() + " &ajoined the guild! &7(accepted by " + p.getName() + ")");
-            return;
-        }
+        Player t = Bukkit.getPlayerExact(a[1]);
+        if (t == null) { Msg.error(p, "That player is not online."); return; }
+        if (t.equals(p)) { Msg.error(p, "You can't invite yourself."); return; }
+        if (gm.getGuild(t.getUniqueId()) != null) { Msg.error(p, "That player is already in a guild."); return; }
+        if (gm.hasInvite(t.getUniqueId(), g)) { Msg.error(p, "That player already has a pending invite."); return; }
 
-        if (gm.hasInvite(target.getUniqueId(), g)) {
-            err(p, target.getName() + " already has a pending invite to your guild.");
-            return;
-        }
+        gm.addInvite(t.getUniqueId(), g, ttl());
+        plugin.broadcast(g, Msg.color(Msg.PREFIX + "&a" + p.getName() + " &einvited &a" + t.getName()
+                + " &eto the guild! They have " + (ttl() / 1000) + " seconds to accept."));
 
-        long ttl = plugin.getConfig().getLong("invite-expire-seconds", 60L);
-        gm.addInvite(target.getUniqueId(), g, ttl * 1000L);
-
-        send(p, "&aYou invited &e" + target.getName() + " &ato your guild. &7(expires in " + ttl + "s)");
-        broadcastExcept(g, p.getUniqueId(), "&e" + p.getName() + " &ainvited &e" + target.getName() + " &ato the guild.");
-
-        send(target, LINE);
-        send(target, "&e" + p.getName() + " &ainvited you to join the guild &b" + g.getName() + "&a!");
-        TextComponent click = new TextComponent(GuildPlugin.color("&a&l[CLICK HERE TO JOIN]"));
-        click.setClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/guild join " + g.getName()));
-        click.setHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT,
-                new BaseComponent[]{new TextComponent(GuildPlugin.color("&7/g join " + g.getName()))}));
-        target.spigot().sendMessage(click);
-        send(target, "&7You have " + ttl + " seconds to accept.");
-        send(target, LINE);
+        Msg.send(t, Msg.line());
+        Msg.send(t, "&a" + p.getName() + " &ehas invited you to join the guild &b" + g.getName() + "&e!");
+        clickable(t, "&6&lCLICK HERE &eto join, or run &6/g join " + g.getName(),
+                "/g join " + g.getName(), "&eClick to join " + g.getName());
+        Msg.send(t, Msg.line());
     }
-
-    // ====================================================================== join
 
     private void join(Player p, String[] a) {
-        if (a.length < 2) {
-            err(p, "Usage: /g join <guild name>");
-            List<String> invited = gm.getInvitedGuildNames(p.getUniqueId());
-            if (!invited.isEmpty()) {
-                send(p, "&7Pending invites: &b" + join(invited, "&7, &b"));
-            }
+        if (a.length < 2) { Msg.error(p, "Usage: /g join <guild name>"); return; }
+        if (gm.getGuild(p.getUniqueId()) != null) {
+            Msg.error(p, "You are already in a guild! Leave it first with /g leave.");
             return;
         }
-        if (gm.getGuildOf(p.getUniqueId()) != null) {
-            err(p, "You are already in a guild! Leave it first with /g leave.");
-            return;
-        }
-        Guild g = gm.getGuild(a[1]);
-        if (g == null) {
-            err(p, "No guild named '" + a[1] + "' exists.");
-            return;
-        }
-        if (g.size() >= plugin.getMaxMembers()) {
-            err(p, "That guild is full.");
-            return;
-        }
+        Guild g = gm.getGuildByName(a[1]);
+        if (g == null) { Msg.error(p, "That guild doesn't exist."); return; }
 
-        // 1) valid invite -> join right away
-        if (gm.consumeInvite(p.getUniqueId(), g)) {
-            gm.addMember(g, p);
-            send(p, LINE);
-            send(p, "&aYou joined the guild &b" + g.getName() + "&a!");
-            send(p, LINE);
-            broadcastExcept(g, p.getUniqueId(), "&e" + p.getName() + " &ajoined the guild!");
-            return;
-        }
+        if (gm.hasInvite(p.getUniqueId(), g)) { addToGuild(g, p); return; }
 
-        // 2) no invite -> send a join request to the guild staff
-        if (gm.hasRequest(g, p.getUniqueId())) {
-            err(p, "You already requested to join " + g.getName() + ". Please wait for an Officer to accept.");
-            return;
-        }
-        long ttl = plugin.getConfig().getLong("request-expire-seconds", 300L);
-        gm.addRequest(g, p.getUniqueId(), ttl * 1000L);
-        send(p, "&aYou requested to join &b" + g.getName() + "&a. &7(expires in " + (ttl / 60L > 0 ? (ttl / 60L) + "m" : ttl + "s") + ")");
+        if (gm.hasRequest(g, p.getUniqueId())) { Msg.error(p, "You already requested to join that guild."); return; }
+        gm.addRequest(g, p.getUniqueId(), ttl());
+        Msg.send(p, Msg.PREFIX + "&eYou requested to join &b" + g.getName()
+                + "&e. An Officer or the Guild Master has to accept it.");
 
-        boolean notified = false;
-        for (Player member : g.getOnlinePlayers()) {
-            if (isStaff(g, member.getUniqueId())) {
-                notified = true;
-                send(member, LINE);
-                send(member, "&e" + p.getName() + " &arequested to join the guild!");
-                TextComponent click = new TextComponent(GuildPlugin.color("&a&l[CLICK TO ACCEPT]"));
-                click.setClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/guild invite " + p.getName()));
-                click.setHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT,
-                        new BaseComponent[]{new TextComponent(GuildPlugin.color("&7/g invite " + p.getName()))}));
-                member.spigot().sendMessage(click);
-                send(member, LINE);
-            }
-        }
-        if (!notified) {
-            send(p, "&7No Guild Master or Officer is online right now - the request stays open until it expires.");
+        for (UUID u : g.getMembers()) {
+            Player m = Bukkit.getPlayer(u);
+            if (m == null || !canManage(g, m)) continue;
+            Msg.send(m, Msg.PREFIX + "&a" + p.getName() + " &ewants to join the guild!");
+            clickable(m, "&6&lCLICK HERE &eto accept, or run &6/g accept " + p.getName(),
+                    "/g accept " + p.getName(), "&eClick to accept " + p.getName());
         }
     }
 
-    // ====================================================================== chat
+    private void accept(Player p, String[] a) {
+        Guild g = need(p);
+        if (g == null) return;
+        if (!canManage(g, p)) { Msg.error(p, "You must be the Guild Master or an Officer to accept requests."); return; }
+        if (a.length < 2) { Msg.error(p, "Usage: /g accept <player>"); return; }
 
-    private void chat(Player p, String[] a, int start) {
-        Guild g = requireGuild(p);
-        if (g == null) {
+        Player t = Bukkit.getPlayerExact(a[1]);
+        if (t == null) { Msg.error(p, "That player must be online to be accepted."); return; }
+        if (!gm.hasRequest(g, t.getUniqueId())) { Msg.error(p, "That player has not requested to join your guild."); return; }
+        if (gm.getGuild(t.getUniqueId()) != null) {
+            gm.clearRequests(t.getUniqueId());
+            Msg.error(p, "That player is already in a guild.");
             return;
         }
-        if (a.length <= start) {
-            err(p, "Usage: /g chat <message>  or  /gc <message>");
-            return;
-        }
-        String message = join(Arrays.asList(a).subList(start, a.length), " ");
-        if (p.hasPermission("guild.chat.color")) {
-            message = GuildPlugin.color(message);
-        }
-        GuildMember me = g.getMember(p.getUniqueId());
-        String rank = me == null ? Guild.DEFAULT_RANK : me.getRank();
-
-        String format = plugin.getConfig().getString("guild-chat-format", "&2Guild > &b{player} &e[{rank}]&f: {message}");
-        String line = GuildPlugin.color(format)
-                .replace("{player}", p.getName())
-                .replace("{rank}", rank)
-                .replace("{guild}", g.getName())
-                .replace("{message}", message);
-
-        for (Player member : g.getOnlinePlayers()) {
-            member.sendMessage(line);
-        }
-        plugin.getLogger().info("[GuildChat:" + g.getName() + "] " + p.getName() + ": " + ChatColor.stripColor(message));
+        addToGuild(g, t);
     }
 
-    // ================================================================= createrank
+    private void chat(Player p, String[] a, int from) {
+        Guild g = need(p);
+        if (g == null) return;
+
+        if (a.length <= from) { // toggle mode
+            Set<UUID> t = plugin.getChatToggled();
+            if (t.remove(p.getUniqueId())) {
+                Msg.send(p, Msg.PREFIX + "&cGuild chat mode disabled. You talk in public chat again.");
+            } else {
+                t.add(p.getUniqueId());
+                Msg.send(p, Msg.PREFIX + "&aGuild chat mode enabled. Use &e/g chat &aagain to disable it.");
+            }
+            return;
+        }
+        plugin.sendGuildChat(p, Msg.join(a, from));
+    }
 
     private void createRank(Player p, String[] a) {
-        Guild g = requireGuild(p);
-        if (g == null || !requireMaster(p, g)) {
-            return;
-        }
-        if (a.length < 2) {
-            err(p, "Usage: /g createrank <rankName>");
-            return;
-        }
-        String name = a[1];
-        if (!RANK_NAME.matcher(name).matches()) {
-            err(p, "Rank names must be 1-16 characters and only contain letters and numbers.");
-            return;
-        }
-        if (name.equalsIgnoreCase("master") || name.equalsIgnoreCase("guildmaster")) {
-            err(p, "That rank name is reserved.");
-            return;
-        }
-        int max = plugin.getConfig().getInt("max-custom-ranks", 8);
-        if (g.getCustomRankCount() >= max) {
-            err(p, "Your guild can only have " + max + " custom ranks.");
-            return;
-        }
-        if (!g.addRank(name)) {
-            err(p, "A rank named '" + g.canonicalRank(name) + "' already exists.");
-            return;
-        }
-        gm.save();
-        send(p, "&aCreated the rank &e" + name + "&a. It sits just above &e" + Guild.DEFAULT_RANK + "&a.");
-        send(p, "&7Use &e/g promote <player>&7 to give it to someone.");
-    }
+        Guild g = need(p);
+        if (g == null) return;
+        if (!g.isMaster(p.getUniqueId())) { Msg.error(p, "Only the Guild Master can create ranks."); return; }
+        if (a.length < 2) { Msg.error(p, "Usage: /g createrank <rankName>"); return; }
 
-    // ================================================================= deleterank
+        String n = a[1];
+        if (!n.matches("[A-Za-z0-9_]{1,16}")) {
+            Msg.error(p, "Rank names must be 1-16 characters (letters, numbers, underscore).");
+            return;
+        }
+        if (g.findRank(n) != null) { Msg.error(p, "That rank already exists."); return; }
+        if (g.getRanks().size() >= plugin.getConfig().getInt("settings.max-ranks", 10)) {
+            Msg.error(p, "Your guild has reached the maximum number of ranks.");
+            return;
+        }
+        g.addRank(n);
+        gm.save();
+        Msg.send(p, Msg.PREFIX + "&aCreated rank &b" + n + "&a (placed just above Member). Use &e/g promote <player> &ato assign it.");
+    }
 
     private void deleteRank(Player p, String[] a) {
-        Guild g = requireGuild(p);
-        if (g == null || !requireMaster(p, g)) {
-            return;
-        }
-        if (a.length < 2) {
-            err(p, "Usage: /g deleterank <rankName>");
-            return;
-        }
-        String stored = g.canonicalRank(a[1]);
-        if (stored == null) {
-            err(p, "Your guild has no rank called '" + a[1] + "'.");
-            return;
-        }
-        if (!g.isCustomRank(stored)) {
-            err(p, "The default ranks (Guild Master, " + Guild.OFFICER_RANK + ", " + Guild.DEFAULT_RANK + ") can't be deleted.");
-            return;
-        }
-        int moved = g.removeRank(stored);
+        Guild g = need(p);
+        if (g == null) return;
+        if (!g.isMaster(p.getUniqueId())) { Msg.error(p, "Only the Guild Master can delete ranks."); return; }
+        if (a.length < 2) { Msg.error(p, "Usage: /g deleterank <rankName>"); return; }
+
+        String r = g.findRank(a[1]);
+        if (r == null) { Msg.error(p, "That rank doesn't exist."); return; }
+        if (Guild.isDefaultRank(r)) { Msg.error(p, "The default ranks (Guild Master, Officer, Member) can't be deleted."); return; }
+
+        g.removeRank(r);
         gm.save();
-        send(p, "&aDeleted the rank &e" + stored + "&a." + (moved > 0 ? " &7" + moved + " member(s) were moved to " + Guild.DEFAULT_RANK + "." : ""));
+        plugin.getTabManager().refreshGuild(g);
+        plugin.broadcast(g, Msg.color(Msg.PREFIX + "&eThe rank &b" + r + " &ewas deleted. Its members are now &bMember&e."));
     }
 
-    // ============================================================ promote/demote
-
-    private void changeRank(Player p, String[] a, boolean promote) {
-        String verb = promote ? "promote" : "demote";
-        Guild g = requireGuild(p);
-        if (g == null) {
-            return;
-        }
-        int myLevel = g.getLevel(p.getUniqueId());
-        if (myLevel > 1) {
-            err(p, "Only the Guild Master and Officers can " + verb + " members.");
-            return;
-        }
-        if (a.length < 2) {
-            err(p, "Usage: /g " + verb + " <player>");
-            return;
-        }
-        GuildMember target = g.getMemberByName(a[1]);
-        if (target == null) {
-            err(p, "'" + a[1] + "' is not in your guild.");
-            return;
-        }
-        if (target.getUuid().equals(p.getUniqueId())) {
-            err(p, "You can't " + verb + " yourself.");
-            return;
-        }
-        if (g.isMaster(target.getUuid())) {
-            err(p, "The Guild Master can't be " + verb + "d. Use /g transfer to hand over leadership.");
-            return;
-        }
-        int targetLevel = g.getLevel(target.getRank());
-        if (myLevel >= targetLevel) {
-            err(p, "You can only " + verb + " members ranked below you.");
-            return;
-        }
-
-        String oldRank = target.getRank();
-        String newRank = promote ? g.higherRank(oldRank) : g.lowerRank(oldRank);
-        if (newRank == null) {
-            if (promote) {
-                err(p, target.getName() + " is already at the highest rank that can be given. Use /g transfer to make someone Guild Master.");
-            } else {
-                err(p, target.getName() + " is already at the lowest rank. Use /g kick to remove them.");
-            }
-            return;
-        }
-        if (promote && myLevel >= g.getLevel(newRank)) {
-            err(p, "You can't promote someone to your own rank or higher.");
-            return;
-        }
-
-        target.setRank(newRank);
-        gm.save();
-
-        broadcast(g, "&e" + p.getName() + " &a" + (promote ? "promoted" : "demoted") + " &e" + target.getName()
-                + " &afrom &e" + oldRank + " &ato &e" + newRank + "&a.");
+    private void ranks(Player p) {
+        Guild g = need(p);
+        if (g == null) return;
+        Msg.send(p, Msg.line());
+        Msg.send(p, "&2Guild ranks &7(highest -> lowest)");
+        Msg.send(p, "&6" + Guild.MASTER_RANK + " &7- &f" + countRank(g, Guild.MASTER_RANK) + " member(s)");
+        for (String r : g.getRanks()) Msg.send(p, "&b" + r + " &7- &f" + countRank(g, r) + " member(s)");
+        Msg.send(p, Msg.line());
     }
 
-    // ===================================================================== leave
+    private int countRank(Guild g, String rank) {
+        int n = 0;
+        for (UUID u : g.getMembers()) if (g.getRank(u).equals(rank)) n++;
+        return n;
+    }
+
+    private void moveRank(Player p, String[] a, boolean up) {
+        Guild g = need(p);
+        if (g == null) return;
+        if (!g.isMaster(p.getUniqueId())) { Msg.error(p, "Only the Guild Master can manage ranks."); return; }
+        if (a.length < 2) { Msg.error(p, "Usage: /g " + (up ? "promote" : "demote") + " <player>"); return; }
+
+        UUID t = g.findMember(a[1]);
+        if (t == null) { Msg.error(p, "That player is not in your guild."); return; }
+        if (t.equals(p.getUniqueId())) { Msg.error(p, "You can't change your own rank."); return; }
+
+        List<String> ranks = g.getRanks();
+        int idx = g.rankIndex(t);
+        int ni = up ? idx - 1 : idx + 1;
+        String name = g.getMemberName(t);
+
+        if (up && ni < 0) {
+            Msg.error(p, name + " already has the highest rank. Use /g transfer to hand over the guild.");
+            return;
+        }
+        if (!up && ni >= ranks.size()) { Msg.error(p, name + " already has the lowest rank."); return; }
+
+        String old = g.getRank(t);
+        String now = ranks.get(ni);
+        g.setRank(t, now);
+        gm.save();
+
+        Player online = Bukkit.getPlayer(t);
+        if (online != null) plugin.getTabManager().apply(online);
+
+        plugin.broadcast(g, Msg.color(Msg.PREFIX + "&a" + name + " &ewas " + (up ? "promoted" : "demoted")
+                + " from &b" + old + " &eto &b" + now + "&e!"));
+    }
 
     private void leave(Player p) {
-        Guild g = requireGuild(p);
-        if (g == null) {
-            return;
-        }
+        Guild g = need(p);
+        if (g == null) return;
         if (g.isMaster(p.getUniqueId())) {
-            err(p, "You are the Guild Master! Hand over leadership with /g transfer <player> or use /g disband.");
+            Msg.error(p, "You are the Guild Master! Use /g transfer <player> or /g disband.");
             return;
         }
         gm.removeMember(g, p.getUniqueId());
-        send(p, "&aYou left the guild &b" + g.getName() + "&a.");
-        broadcast(g, "&e" + p.getName() + " &cleft the guild.");
-    }
+        gm.save();
+        plugin.getTabManager().remove(p);
+        plugin.getChatToggled().remove(p.getUniqueId());
 
-    // ====================================================================== kick
+        Msg.send(p, Msg.PREFIX + "&eYou left the guild &b" + g.getName() + "&e.");
+        plugin.broadcast(g, Msg.color(Msg.PREFIX + "&a" + p.getName() + " &eleft the guild!"));
+    }
 
     private void kick(Player p, String[] a) {
-        Guild g = requireGuild(p);
-        if (g == null) {
-            return;
-        }
-        int myLevel = g.getLevel(p.getUniqueId());
-        if (myLevel > 1) {
-            err(p, "Only the Guild Master and Officers can kick members.");
-            return;
-        }
-        if (a.length < 2) {
-            err(p, "Usage: /g kick <player> [reason]");
-            return;
-        }
-        GuildMember target = g.getMemberByName(a[1]);
-        if (target == null) {
-            err(p, "'" + a[1] + "' is not in your guild.");
-            return;
-        }
-        if (target.getUuid().equals(p.getUniqueId())) {
-            err(p, "You can't kick yourself. Use /g leave.");
-            return;
-        }
-        if (myLevel >= g.getLevel(target.getRank())) {
-            err(p, "You can only kick members ranked below you.");
-            return;
-        }
-        String reason = a.length > 2 ? join(Arrays.asList(a).subList(2, a.length), " ") : null;
+        Guild g = need(p);
+        if (g == null) return;
+        if (!canManage(g, p)) { Msg.error(p, "You must be the Guild Master or an Officer to kick players."); return; }
+        if (a.length < 2) { Msg.error(p, "Usage: /g kick <player>"); return; }
 
-        gm.removeMember(g, target.getUuid());
-        Player online = Bukkit.getPlayer(target.getUuid());
-        if (online != null) {
-            send(online, "&cYou were kicked from the guild &b" + g.getName() + " &cby &e" + p.getName() + "&c."
-                    + (reason != null ? " &7Reason: " + reason : ""));
+        UUID t = g.findMember(a[1]);
+        if (t == null) { Msg.error(p, "That player is not in your guild."); return; }
+        if (t.equals(p.getUniqueId())) { Msg.error(p, "You can't kick yourself. Use /g leave."); return; }
+        if (g.isMaster(t)) { Msg.error(p, "You can't kick the Guild Master."); return; }
+        if (!g.isMaster(p.getUniqueId()) && g.rankIndex(t) <= g.rankIndex(p.getUniqueId())) {
+            Msg.error(p, "You can only kick members with a lower rank than yours.");
+            return;
         }
-        broadcast(g, "&e" + target.getName() + " &cwas kicked by &e" + p.getName() + "&c."
-                + (reason != null ? " &7Reason: " + reason : ""));
-    }
 
-    // ================================================================== transfer
+        String tn = g.getMemberName(t);
+        plugin.broadcast(g, Msg.color(Msg.PREFIX + "&a" + tn + " &cwas kicked from the guild by &a" + p.getName() + "&c!"));
 
-    private void transfer(Player p, String[] a) {
-        Guild g = requireGuild(p);
-        if (g == null || !requireMaster(p, g)) {
-            return;
-        }
-        if (a.length < 2) {
-            err(p, "Usage: /g transfer <player>");
-            return;
-        }
-        GuildMember target = g.getMemberByName(a[1]);
-        if (target == null) {
-            err(p, "'" + a[1] + "' is not in your guild.");
-            return;
-        }
-        if (target.getUuid().equals(p.getUniqueId())) {
-            err(p, "You already are the Guild Master.");
-            return;
-        }
-        GuildMember me = g.getMember(p.getUniqueId());
-        me.setRank(Guild.OFFICER_RANK);
-        target.setRank(Guild.MASTER_RANK);
-        g.setMaster(target.getUuid());
+        gm.removeMember(g, t);
         gm.save();
-        broadcast(g, "&e" + p.getName() + " &atransferred the guild to &e" + target.getName() + "&a, the new Guild Master!");
+        plugin.getChatToggled().remove(t);
+        Player online = Bukkit.getPlayer(t);
+        if (online != null) plugin.getTabManager().remove(online);
     }
-
-    // ====================================================================== list
 
     private void list(Player p) {
-        Guild g = requireGuild(p);
-        if (g == null) {
-            return;
-        }
-        send(p, LINE);
+        Guild g = need(p);
+        if (g == null) return;
+
+        Msg.send(p, Msg.line());
+        Msg.send(p, "&" + g.getColor() + g.getName() + " &2- Members (&a" + g.size() + "&2)");
+
         List<String> order = new ArrayList<String>();
         order.add(Guild.MASTER_RANK);
         order.addAll(g.getRanks());
 
-        int online = 0;
         for (String rank : order) {
-            List<GuildMember> inRank = new ArrayList<GuildMember>();
-            for (GuildMember m : g.getMembers()) {
-                if (m.getRank().equalsIgnoreCase(rank)) {
-                    inRank.add(m);
-                }
-            }
-            if (inRank.isEmpty()) {
-                continue;
-            }
-            Collections.sort(inRank, new Comparator<GuildMember>() {
-                @Override
-                public int compare(GuildMember x, GuildMember y) {
-                    return x.getName().compareToIgnoreCase(y.getName());
-                }
-            });
-            send(p, "&6-- " + rank + " --");
             StringBuilder sb = new StringBuilder();
-            for (GuildMember m : inRank) {
-                Player pl = Bukkit.getPlayer(m.getUuid());
-                boolean isOn = pl != null && pl.isOnline();
-                if (isOn) {
-                    online++;
-                }
-                sb.append("&f").append(m.getName()).append(' ').append(isOn ? "&a" : "&c").append(DOT).append("  ");
+            for (UUID u : g.getMembers()) {
+                if (!g.getRank(u).equals(rank)) continue;
+                boolean on = Bukkit.getPlayer(u) != null;
+                sb.append(on ? "&f" : "&7").append(g.getMemberName(u)).append(on ? " &a\u25CF  " : " &c\u25CF  ");
             }
-            send(p, sb.toString().trim());
+            if (sb.length() == 0) continue;
+            Msg.send(p, " ");
+            Msg.send(p, "&6-- " + rank + " --");
+            Msg.send(p, sb.toString());
         }
-        send(p, "");
-        send(p, "&eTotal Members: &f" + g.size() + "  &eOnline: &a" + online);
-        send(p, LINE);
+        Msg.send(p, Msg.line());
     }
 
-    // ====================================================================== info
+    private void info(Player p) {
+        Guild g = need(p);
+        if (g == null) return;
 
-    private void info(Player p, String[] a) {
-        Guild g = a.length >= 2 ? gm.getGuild(a[1]) : gm.getGuildOf(p.getUniqueId());
-        if (g == null) {
-            if (a.length >= 2) {
-                err(p, "No guild named '" + a[1] + "' exists.");
-            } else {
-                err(p, "You are not in a guild! Create one with /g create <name>.");
-            }
-            return;
+        int online = 0;
+        for (UUID u : g.getMembers()) if (Bukkit.getPlayer(u) != null) online++;
+
+        Msg.send(p, Msg.line());
+        Msg.send(p, "&2Guild: &" + g.getColor() + g.getName());
+        Msg.send(p, "&2Guild Master: &f" + g.getMemberName(g.getMaster()));
+        Msg.send(p, "&2Members: &f" + g.size() + " &7(&a" + online + " online&7)");
+        Msg.send(p, "&2Your rank: &f" + g.getRank(p.getUniqueId()));
+        Msg.send(p, "&2Color: &" + g.getColor() + GuiManager.colorName(g.getColor()));
+        Msg.send(p, "&2Tab display: &f" + g.getTabMode().getDisplay());
+        Msg.send(p, "&2Ranks: &f" + Guild.MASTER_RANK + ", " + join(g.getRanks()));
+        Msg.send(p, "&2Created: &f" + new SimpleDateFormat("yyyy-MM-dd").format(new Date(g.getCreated())));
+        Msg.send(p, Msg.line());
+    }
+
+    private String join(List<String> l) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < l.size(); i++) {
+            if (i > 0) sb.append(", ");
+            sb.append(l.get(i));
         }
-        GuildMember master = g.getMasterMember();
-        List<String> ranks = new ArrayList<String>();
-        ranks.add(Guild.MASTER_RANK);
-        ranks.addAll(g.getRanks());
-
-        send(p, LINE);
-        send(p, "&6Guild: &b" + g.getName());
-        send(p, "&eGuild Master: &f" + (master == null ? "Unknown" : master.getName()));
-        send(p, "&eMembers: &f" + g.size() + "&7/" + plugin.getMaxMembers());
-        send(p, "&eOnline: &a" + g.getOnlineCount());
-        send(p, "&eCreated: &f" + new SimpleDateFormat("yyyy-MM-dd").format(new Date(g.getCreated())));
-        send(p, "&eRanks: &f" + join(ranks, "&7, &f"));
-        GuildMember me = g.getMember(p.getUniqueId());
-        if (me != null) {
-            send(p, "&eYour rank: &f" + me.getRank());
-        }
-        send(p, LINE);
+        return sb.toString();
     }
 
-    // ====================================================================== help
+    private void transfer(Player p, String[] a) {
+        Guild g = need(p);
+        if (g == null) return;
+        if (!g.isMaster(p.getUniqueId())) { Msg.error(p, "Only the Guild Master can transfer the guild."); return; }
+        if (a.length < 2) { Msg.error(p, "Usage: /g transfer <player>"); return; }
 
-    private void help(Player p) {
-        send(p, LINE);
-        send(p, "&6Guild Commands &7(/g, /guild)");
-        helpLine(p, "create <name>", "Create a guild");
-        helpLine(p, "invite <player>", "Invite a player (Officer+)");
-        helpLine(p, "join <guild>", "Accept an invite / request to join");
-        helpLine(p, "chat <message>", "Guild chat (also /gc <message>)");
-        helpLine(p, "list", "Show members and online status");
-        helpLine(p, "info [guild]", "Show guild information");
-        helpLine(p, "leave", "Leave your guild");
-        helpLine(p, "kick <player> [reason]", "Kick a lower-ranked member (Officer+)");
-        helpLine(p, "promote <player>", "Promote a lower-ranked member (Officer+)");
-        helpLine(p, "demote <player>", "Demote a lower-ranked member (Officer+)");
-        helpLine(p, "createrank <name>", "Create a custom rank (Master)");
-        helpLine(p, "deleterank <name>", "Delete a custom rank (Master)");
-        helpLine(p, "transfer <player>", "Make someone else Guild Master (Master)");
-        helpLine(p, "disband", "Disband the guild (Master)");
-        send(p, LINE);
+        UUID t = g.findMember(a[1]);
+        if (t == null) { Msg.error(p, "That player is not in your guild."); return; }
+        if (t.equals(p.getUniqueId())) { Msg.error(p, "You are already the Guild Master."); return; }
+
+        g.transferMaster(t);
+        gm.save();
+        plugin.getTabManager().refreshGuild(g);
+        plugin.broadcast(g, Msg.color(Msg.PREFIX + "&a" + p.getName() + " &etransferred the guild to &a"
+                + g.getMemberName(t) + "&e!"));
     }
 
-    private void helpLine(Player p, String usage, String description) {
-        send(p, "&e/g " + usage + " &7- &f" + description);
+    private void openGui(Player p, boolean color) {
+        Guild g = need(p);
+        if (g == null) return;
+        if (!p.hasPermission(color ? "guild.color" : "guild.tab")) { Msg.error(p, "You don't have permission."); return; }
+        if (!g.isMaster(p.getUniqueId())) { Msg.error(p, "Only the Guild Master can change this."); return; }
+        if (color) plugin.getGuiManager().openColor(p, g);
+        else plugin.getGuiManager().openTab(p, g);
     }
 
-    // ============================================================== tab complete
+    // ----------------------------------------------------------- tab complete
 
     @Override
-    public List<String> onTabComplete(CommandSender sender, Command cmd, String alias, String[] args) {
-        if (!(sender instanceof Player) || cmd.getName().equalsIgnoreCase("gc")) {
-            return Collections.emptyList();
-        }
-        Player p = (Player) sender;
-        Guild g = gm.getGuildOf(p.getUniqueId());
+    public List<String> onTabComplete(CommandSender s, Command c, String l, String[] a) {
+        if (!(s instanceof Player) || c.getName().equalsIgnoreCase("gc")) return Collections.<String>emptyList();
+        Player p = (Player) s;
+        Guild g = gm.getGuild(p.getUniqueId());
 
-        if (args.length == 1) {
-            List<String> subs = new ArrayList<String>(SUBCOMMANDS);
-            if (sender.hasPermission("guild.admin")) {
-                subs.add("admindisband");
-            }
-            return filter(subs, args[0]);
-        }
-        if (args.length == 2) {
-            String sub = args[0].toLowerCase(Locale.ROOT);
-            List<String> options = new ArrayList<String>();
-            switch (sub) {
+        if (a.length == 1) return filter(SUBS, a[0]);
+
+        if (a.length == 2) {
+            List<String> pool = new ArrayList<String>();
+            switch (a[0].toLowerCase()) {
                 case "invite":
-                    for (Player online : Bukkit.getOnlinePlayers()) {
-                        if (gm.getGuildOf(online.getUniqueId()) == null) {
-                            options.add(online.getName());
-                        }
-                    }
-                    break;
-                case "kick":
-                case "promote":
-                case "demote":
-                case "transfer":
-                    if (g != null) {
-                        for (GuildMember m : g.getMembers()) {
-                            options.add(m.getName());
-                        }
-                    }
-                    break;
-                case "deleterank":
-                    if (g != null) {
-                        for (String r : g.getRanks()) {
-                            if (g.isCustomRank(r)) {
-                                options.add(r);
-                            }
-                        }
-                    }
+                case "accept":
+                    for (Player o : Bukkit.getOnlinePlayers()) pool.add(o.getName());
                     break;
                 case "join":
-                case "accept":
-                    options.addAll(gm.getInvitedGuildNames(p.getUniqueId()));
+                    for (Guild x : gm.all()) pool.add(x.getName());
                     break;
-                case "info":
-                case "admindisband":
-                    for (Guild each : gm.getGuilds()) {
-                        options.add(each.getName());
-                    }
+                case "promote":
+                case "demote":
+                case "kick":
+                case "transfer":
+                    if (g != null) for (UUID u : g.getMembers()) pool.add(g.getMemberName(u));
                     break;
-                case "disband":
-                    options.add("confirm");
+                case "deleterank":
+                    if (g != null) for (String r : g.getRanks()) if (!Guild.isDefaultRank(r)) pool.add(r);
                     break;
                 default:
                     break;
             }
-            return filter(options, args[1]);
+            return filter(pool, a[1]);
         }
-        return Collections.emptyList();
+        return Collections.<String>emptyList();
     }
 
-    private List<String> filter(Collection<String> options, String prefix) {
+    private List<String> filter(List<String> src, String start) {
         List<String> out = new ArrayList<String>();
-        String lower = prefix.toLowerCase(Locale.ROOT);
-        for (String o : options) {
-            if (o.toLowerCase(Locale.ROOT).startsWith(lower)) {
-                out.add(o);
-            }
-        }
-        Collections.sort(out, String.CASE_INSENSITIVE_ORDER);
+        for (String x : src) if (x.toLowerCase().startsWith(start.toLowerCase())) out.add(x);
         return out;
-    }
-
-    // ================================================================== helpers
-
-    private Guild requireGuild(Player p) {
-        Guild g = gm.getGuildOf(p.getUniqueId());
-        if (g == null) {
-            err(p, "You are not in a guild! Create one with /g create <name>.");
-        }
-        return g;
-    }
-
-    private boolean requireMaster(Player p, Guild g) {
-        if (!g.isMaster(p.getUniqueId())) {
-            err(p, "Only the Guild Master can do that.");
-            return false;
-        }
-        return true;
-    }
-
-    /** Guild Master or Officer. */
-    private boolean isStaff(Guild g, UUID uuid) {
-        return g.getLevel(uuid) <= 1;
-    }
-
-    private void broadcast(Guild g, String text) {
-        String line = GuildPlugin.color("&2Guild > &r" + text);
-        for (Player member : g.getOnlinePlayers()) {
-            member.sendMessage(line);
-        }
-    }
-
-    private void broadcastExcept(Guild g, UUID except, String text) {
-        String line = GuildPlugin.color("&2Guild > &r" + text);
-        for (Player member : g.getOnlinePlayers()) {
-            if (!member.getUniqueId().equals(except)) {
-                member.sendMessage(line);
-            }
-        }
-    }
-
-    private void send(CommandSender to, String text) {
-        to.sendMessage(GuildPlugin.color(text));
-    }
-
-    private void err(CommandSender to, String text) {
-        send(to, "&c" + text);
-    }
-
-    private String join(List<String> parts, String separator) {
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < parts.size(); i++) {
-            if (i > 0) {
-                sb.append(separator);
-            }
-            sb.append(parts.get(i));
-        }
-        return sb.toString();
     }
 }

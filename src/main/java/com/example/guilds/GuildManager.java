@@ -1,382 +1,178 @@
 package com.example.guilds;
 
-import org.bukkit.Bukkit;
+import java.io.File;
+import java.io.IOException;
+import java.util.*;
+
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 
-import java.io.File;
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.AtomicMoveNotSupportedException;
-import java.nio.file.Files;
-import java.nio.file.StandardCopyOption;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.UUID;
-import java.util.logging.Level;
-
-/**
- * Holds every guild in memory, handles invites / join requests and persists
- * everything to plugins/Guilds/guilds.yml.
- */
+/** Holds all guilds, handles guilds.yml persistence, invites and join requests. */
 public class GuildManager {
 
     private final GuildPlugin plugin;
     private final File file;
 
-    private final Map<String, Guild> guilds = new HashMap<String, Guild>();      // lower-case name -> guild
-    private final Map<UUID, Guild> playerIndex = new HashMap<UUID, Guild>();     // player -> guild
-
-    // target player -> (guild key -> expiry millis)
-    private final Map<UUID, Map<String, Long>> invites = new HashMap<UUID, Map<String, Long>>();
-    // guild key -> (requesting player -> expiry millis)
-    private final Map<String, Map<UUID, Long>> requests = new HashMap<String, Map<UUID, Long>>();
-
-    private final Object ioLock = new Object();
-    private long saveSeq = 0;
-    private long writtenSeq = 0;
+    private final Map<String, Guild> guilds = new LinkedHashMap<>();
+    private final Map<UUID, String> playerGuild = new HashMap<>();
+    /** invited player -> (guild key -> expiry) */
+    private final Map<UUID, Map<String, Long>> invites = new HashMap<>();
+    /** guild key -> (requesting player -> expiry) */
+    private final Map<String, Map<UUID, Long>> requests = new HashMap<>();
 
     public GuildManager(GuildPlugin plugin) {
         this.plugin = plugin;
         this.file = new File(plugin.getDataFolder(), "guilds.yml");
     }
 
-    // ================================================================ storage
+    private static String key(String name) { return name.toLowerCase(); }
+
+    // ------------------------------------------------------------- lookups
+
+    public Guild getGuild(UUID player) {
+        String k = playerGuild.get(player);
+        return k == null ? null : guilds.get(k);
+    }
+
+    public Guild getGuildByName(String name) { return guilds.get(key(name)); }
+    public boolean exists(String name) { return guilds.containsKey(key(name)); }
+    public Collection<Guild> all() { return guilds.values(); }
+
+    // ------------------------------------------------------------ mutation
+
+    public Guild createGuild(String name, Player master) {
+        Guild g = new Guild(name, master.getUniqueId(), master.getName(), System.currentTimeMillis());
+        guilds.put(key(name), g);
+        playerGuild.put(master.getUniqueId(), key(name));
+        return g;
+    }
+
+    public void disband(Guild g) {
+        String k = key(g.getName());
+        for (UUID u : g.getMembers()) playerGuild.remove(u);
+        guilds.remove(k);
+        requests.remove(k);
+        for (Map<String, Long> m : invites.values()) m.remove(k);
+    }
+
+    public void addMember(Guild g, UUID u, String name) {
+        g.addMember(u, name, Guild.MEMBER);
+        playerGuild.put(u, key(g.getName()));
+    }
+
+    public void removeMember(Guild g, UUID u) {
+        g.removeMember(u);
+        playerGuild.remove(u);
+    }
+
+    // ------------------------------------------------------------- invites
+
+    public void addInvite(UUID target, Guild g, long ttlMs) {
+        Map<String, Long> m = invites.get(target);
+        if (m == null) { m = new HashMap<>(); invites.put(target, m); }
+        m.put(key(g.getName()), System.currentTimeMillis() + ttlMs);
+    }
+
+    public boolean hasInvite(UUID target, Guild g) {
+        Map<String, Long> m = invites.get(target);
+        if (m == null) return false;
+        Long exp = m.get(key(g.getName()));
+        if (exp == null) return false;
+        if (exp < System.currentTimeMillis()) { m.remove(key(g.getName())); return false; }
+        return true;
+    }
+
+    public void clearInvites(UUID target) { invites.remove(target); }
+
+    // ------------------------------------------------------------ requests
+
+    public void addRequest(Guild g, UUID requester, long ttlMs) {
+        Map<UUID, Long> m = requests.get(key(g.getName()));
+        if (m == null) { m = new HashMap<>(); requests.put(key(g.getName()), m); }
+        m.put(requester, System.currentTimeMillis() + ttlMs);
+    }
+
+    public boolean hasRequest(Guild g, UUID requester) {
+        Map<UUID, Long> m = requests.get(key(g.getName()));
+        if (m == null) return false;
+        Long exp = m.get(requester);
+        if (exp == null) return false;
+        if (exp < System.currentTimeMillis()) { m.remove(requester); return false; }
+        return true;
+    }
+
+    public void clearRequests(UUID requester) {
+        for (Map<UUID, Long> m : requests.values()) m.remove(requester);
+    }
+
+    // --------------------------------------------------------- persistence
 
     public void load() {
         guilds.clear();
-        playerIndex.clear();
-        if (!file.exists()) {
-            return;
-        }
+        playerGuild.clear();
+        if (!file.exists()) return;
 
         YamlConfiguration yml = YamlConfiguration.loadConfiguration(file);
         ConfigurationSection root = yml.getConfigurationSection("guilds");
-        if (root == null) {
-            return;
-        }
+        if (root == null) return;
 
-        for (String key : root.getKeys(false)) {
-            ConfigurationSection s = root.getConfigurationSection(key);
-            if (s == null) {
-                continue;
-            }
+        for (String k : root.getKeys(false)) {
             try {
-                Guild guild = readGuild(key, s);
-                guilds.put(guild.getName().toLowerCase(Locale.ROOT), guild);
+                ConfigurationSection s = root.getConfigurationSection(k);
+                String name = s.getString("name", k);
+                UUID master = UUID.fromString(s.getString("master"));
+                String masterName = s.getString("members." + master + ".name", "Unknown");
+                Guild g = new Guild(name, master, masterName, s.getLong("created", System.currentTimeMillis()));
+
+                String col = s.getString("color", "a");
+                if (!col.isEmpty()) g.setColor(col.charAt(0));
+                try {
+                    g.setTabMode(TabMode.valueOf(s.getString("tab-mode", "NAME").toUpperCase()));
+                } catch (IllegalArgumentException ignored) { }
+
+                List<String> ranks = s.getStringList("ranks");
+                if (!ranks.isEmpty()) g.setRanks(ranks);
+
+                ConfigurationSection members = s.getConfigurationSection("members");
+                if (members != null) {
+                    for (String id : members.getKeys(false)) {
+                        UUID u = UUID.fromString(id);
+                        String rank = members.getString(id + ".rank", Guild.MEMBER);
+                        if (u.equals(master)) rank = Guild.MASTER_RANK;
+                        g.addMember(u, members.getString(id + ".name", "Unknown"), rank);
+                    }
+                }
+
+                guilds.put(key(name), g);
+                for (UUID u : g.getMembers()) playerGuild.put(u, key(name));
             } catch (Exception ex) {
-                plugin.getLogger().log(Level.WARNING, "Skipping malformed guild entry '" + key + "' in guilds.yml", ex);
+                plugin.getLogger().warning("Could not load guild '" + k + "': " + ex.getMessage());
             }
         }
         plugin.getLogger().info("Loaded " + guilds.size() + " guild(s).");
     }
 
-    private Guild readGuild(String key, ConfigurationSection s) {
-        String name = s.getString("name", key);
-        UUID master = UUID.fromString(s.getString("master"));
-        Guild guild = new Guild(name, s.getLong("created", System.currentTimeMillis()));
-
-        // Sanitise the rank list: Officer first, Member last, no duplicates, no master rank.
-        List<String> ranks = new ArrayList<String>();
-        for (String r : s.getStringList("ranks")) {
-            if (r == null || r.trim().isEmpty()) {
-                continue;
-            }
-            r = r.trim();
-            if (Guild.MASTER_RANK.equalsIgnoreCase(r)
-                    || Guild.OFFICER_RANK.equalsIgnoreCase(r)
-                    || Guild.DEFAULT_RANK.equalsIgnoreCase(r)) {
-                continue;
-            }
-            boolean dup = false;
-            for (String existing : ranks) {
-                if (existing.equalsIgnoreCase(r)) {
-                    dup = true;
-                    break;
-                }
-            }
-            if (!dup) {
-                ranks.add(r);
-            }
-        }
-        ranks.add(0, Guild.OFFICER_RANK);
-        ranks.add(Guild.DEFAULT_RANK);
-        guild.setRanks(ranks);
-        guild.setMaster(master);
-
-        ConfigurationSection ms = s.getConfigurationSection("members");
-        if (ms != null) {
-            for (String uuidStr : ms.getKeys(false)) {
-                try {
-                    UUID uuid = UUID.fromString(uuidStr);
-                    if (playerIndex.containsKey(uuid)) {
-                        plugin.getLogger().warning("Player " + uuid + " is in more than one guild in guilds.yml; ignoring the entry in '" + name + "'.");
-                        continue;
-                    }
-                    String memberName = ms.getString(uuidStr + ".name", "Unknown");
-                    String rank = guild.canonicalRank(ms.getString(uuidStr + ".rank", Guild.DEFAULT_RANK));
-                    if (rank == null) {
-                        rank = Guild.DEFAULT_RANK;
-                    }
-                    if (uuid.equals(master)) {
-                        rank = Guild.MASTER_RANK;
-                    } else if (Guild.MASTER_RANK.equals(rank)) {
-                        rank = Guild.OFFICER_RANK;
-                    }
-                    guild.addMember(new GuildMember(uuid, memberName, rank, ms.getLong(uuidStr + ".joined", guild.getCreated())));
-                    playerIndex.put(uuid, guild);
-                } catch (IllegalArgumentException ex) {
-                    plugin.getLogger().warning("Bad member UUID '" + uuidStr + "' in guild '" + name + "'.");
-                }
-            }
-        }
-
-        // Make sure the master is always a member.
-        if (guild.getMember(master) == null) {
-            if (playerIndex.containsKey(master)) {
-                throw new IllegalStateException("master " + master + " already belongs to another guild");
-            }
-            guild.addMember(new GuildMember(master, "Unknown", Guild.MASTER_RANK, guild.getCreated()));
-            playerIndex.put(master, guild);
-        }
-        return guild;
-    }
-
-    /** Serialises on the calling (main) thread, writes to disk asynchronously. */
     public void save() {
-        final String data = serialise();
-        final long seq = ++saveSeq;
-        if (plugin.isEnabled()) {
-            Bukkit.getScheduler().runTaskAsynchronously(plugin, new Runnable() {
-                @Override
-                public void run() {
-                    write(data, seq);
-                }
-            });
-        } else {
-            write(data, seq);
-        }
-    }
-
-    /** Synchronous save, used on shutdown. */
-    public void saveNow() {
-        write(serialise(), ++saveSeq);
-    }
-
-    private String serialise() {
         YamlConfiguration yml = new YamlConfiguration();
-        yml.set("version", 1);
         for (Guild g : guilds.values()) {
-            String base = "guilds." + g.getName().toLowerCase(Locale.ROOT);
-            yml.set(base + ".name", g.getName());
-            yml.set(base + ".master", g.getMaster().toString());
-            yml.set(base + ".created", g.getCreated());
-            yml.set(base + ".ranks", new ArrayList<String>(g.getRanks()));
-            for (GuildMember m : g.getMembers()) {
-                String mb = base + ".members." + m.getUuid().toString();
-                yml.set(mb + ".name", m.getName());
-                yml.set(mb + ".rank", m.getRank());
-                yml.set(mb + ".joined", m.getJoined());
+            String p = "guilds." + key(g.getName()) + ".";
+            yml.set(p + "name", g.getName());
+            yml.set(p + "master", g.getMaster().toString());
+            yml.set(p + "created", g.getCreated());
+            yml.set(p + "color", String.valueOf(g.getColor()));
+            yml.set(p + "tab-mode", g.getTabMode().name());
+            yml.set(p + "ranks", new ArrayList<>(g.getRanks()));
+            for (UUID u : g.getMembers()) {
+                yml.set(p + "members." + u + ".name", g.getMemberName(u));
+                yml.set(p + "members." + u + ".rank", g.getRank(u));
             }
         }
-        return yml.saveToString();
-    }
-
-    private void write(String data, long seq) {
-        synchronized (ioLock) {
-            if (seq < writtenSeq) {
-                return; // a newer snapshot was already written
-            }
-            try {
-                File dir = file.getParentFile();
-                if (dir != null && !dir.exists()) {
-                    dir.mkdirs();
-                }
-                File tmp = new File(dir, "guilds.yml.tmp");
-                Files.write(tmp.toPath(), data.getBytes(StandardCharsets.UTF_8));
-                try {
-                    Files.move(tmp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-                } catch (AtomicMoveNotSupportedException ex) {
-                    Files.move(tmp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING);
-                }
-                writtenSeq = seq;
-            } catch (IOException ex) {
-                plugin.getLogger().log(Level.SEVERE, "Could not save guilds.yml", ex);
-            }
-        }
-    }
-
-    // ================================================================= lookup
-
-    public Guild getGuild(String name) {
-        return name == null ? null : guilds.get(name.toLowerCase(Locale.ROOT));
-    }
-
-    public Guild getGuildOf(UUID uuid) {
-        return playerIndex.get(uuid);
-    }
-
-    public Collection<Guild> getGuilds() {
-        return guilds.values();
-    }
-
-    // ============================================================== mutations
-
-    public Guild createGuild(String name, Player master) {
-        Guild guild = new Guild(name, System.currentTimeMillis());
-        guild.setMaster(master.getUniqueId());
-        guild.addMember(new GuildMember(master.getUniqueId(), master.getName(), Guild.MASTER_RANK, guild.getCreated()));
-        guilds.put(name.toLowerCase(Locale.ROOT), guild);
-        playerIndex.put(master.getUniqueId(), guild);
-        save();
-        return guild;
-    }
-
-    public void disband(Guild guild) {
-        String key = guild.getName().toLowerCase(Locale.ROOT);
-        for (GuildMember m : new ArrayList<GuildMember>(guild.getMembers())) {
-            playerIndex.remove(m.getUuid());
-        }
-        guilds.remove(key);
-        requests.remove(key);
-        for (Map<String, Long> perPlayer : invites.values()) {
-            perPlayer.remove(key);
-        }
-        save();
-    }
-
-    public void addMember(Guild guild, Player player) {
-        guild.addMember(new GuildMember(player.getUniqueId(), player.getName(), Guild.DEFAULT_RANK, System.currentTimeMillis()));
-        playerIndex.put(player.getUniqueId(), guild);
-        // joining makes any other pending invite / request obsolete
-        invites.remove(player.getUniqueId());
-        for (Map<UUID, Long> perGuild : requests.values()) {
-            perGuild.remove(player.getUniqueId());
-        }
-        save();
-    }
-
-    public void removeMember(Guild guild, UUID uuid) {
-        guild.removeMember(uuid);
-        playerIndex.remove(uuid);
-        save();
-    }
-
-    // ================================================================ invites
-
-    public void addInvite(UUID target, Guild guild, long ttlMillis) {
-        Map<String, Long> perPlayer = invites.get(target);
-        if (perPlayer == null) {
-            perPlayer = new HashMap<String, Long>();
-            invites.put(target, perPlayer);
-        }
-        perPlayer.put(guild.getName().toLowerCase(Locale.ROOT), System.currentTimeMillis() + ttlMillis);
-    }
-
-    public boolean hasInvite(UUID target, Guild guild) {
-        Map<String, Long> perPlayer = invites.get(target);
-        if (perPlayer == null) {
-            return false;
-        }
-        Long expiry = perPlayer.get(guild.getName().toLowerCase(Locale.ROOT));
-        return expiry != null && expiry > System.currentTimeMillis();
-    }
-
-    /** Returns true (and removes the invite) if a valid invite existed. */
-    public boolean consumeInvite(UUID target, Guild guild) {
-        boolean valid = hasInvite(target, guild);
-        Map<String, Long> perPlayer = invites.get(target);
-        if (perPlayer != null) {
-            perPlayer.remove(guild.getName().toLowerCase(Locale.ROOT));
-        }
-        return valid;
-    }
-
-    /** Display names of guilds that currently have a valid invite for this player. */
-    public List<String> getInvitedGuildNames(UUID target) {
-        List<String> names = new ArrayList<String>();
-        Map<String, Long> perPlayer = invites.get(target);
-        if (perPlayer == null) {
-            return names;
-        }
-        long now = System.currentTimeMillis();
-        for (Map.Entry<String, Long> e : perPlayer.entrySet()) {
-            Guild g = guilds.get(e.getKey());
-            if (g != null && e.getValue() > now) {
-                names.add(g.getName());
-            }
-        }
-        return names;
-    }
-
-    // ============================================================== join requests
-
-    public void addRequest(Guild guild, UUID requester, long ttlMillis) {
-        String key = guild.getName().toLowerCase(Locale.ROOT);
-        Map<UUID, Long> perGuild = requests.get(key);
-        if (perGuild == null) {
-            perGuild = new HashMap<UUID, Long>();
-            requests.put(key, perGuild);
-        }
-        perGuild.put(requester, System.currentTimeMillis() + ttlMillis);
-    }
-
-    public boolean hasRequest(Guild guild, UUID requester) {
-        Map<UUID, Long> perGuild = requests.get(guild.getName().toLowerCase(Locale.ROOT));
-        if (perGuild == null) {
-            return false;
-        }
-        Long expiry = perGuild.get(requester);
-        return expiry != null && expiry > System.currentTimeMillis();
-    }
-
-    /** Returns true (and removes the request) if a valid request existed. */
-    public boolean consumeRequest(Guild guild, UUID requester) {
-        boolean valid = hasRequest(guild, requester);
-        Map<UUID, Long> perGuild = requests.get(guild.getName().toLowerCase(Locale.ROOT));
-        if (perGuild != null) {
-            perGuild.remove(requester);
-        }
-        return valid;
-    }
-
-    // ================================================================ cleanup
-
-    public void cleanupExpired() {
-        long now = System.currentTimeMillis();
-
-        Iterator<Map.Entry<UUID, Map<String, Long>>> it = invites.entrySet().iterator();
-        while (it.hasNext()) {
-            Map<String, Long> perPlayer = it.next().getValue();
-            Iterator<Map.Entry<String, Long>> inner = perPlayer.entrySet().iterator();
-            while (inner.hasNext()) {
-                if (inner.next().getValue() <= now) {
-                    inner.remove();
-                }
-            }
-            if (perPlayer.isEmpty()) {
-                it.remove();
-            }
-        }
-
-        Iterator<Map.Entry<String, Map<UUID, Long>>> rit = requests.entrySet().iterator();
-        while (rit.hasNext()) {
-            Map<UUID, Long> perGuild = rit.next().getValue();
-            Iterator<Map.Entry<UUID, Long>> inner = perGuild.entrySet().iterator();
-            while (inner.hasNext()) {
-                if (inner.next().getValue() <= now) {
-                    inner.remove();
-                }
-            }
-            if (perGuild.isEmpty()) {
-                rit.remove();
-            }
+        try {
+            if (!plugin.getDataFolder().exists()) plugin.getDataFolder().mkdirs();
+            yml.save(file);
+        } catch (IOException e) {
+            plugin.getLogger().severe("Could not save guilds.yml: " + e.getMessage());
         }
     }
 }

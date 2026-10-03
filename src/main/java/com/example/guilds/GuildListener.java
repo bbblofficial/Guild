@@ -1,12 +1,15 @@
 package com.example.guilds;
 
+import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
+import org.bukkit.event.player.AsyncPlayerChatEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerKickEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 
-/** Keeps stored names fresh and tells guild members when a mate joins or leaves the server. */
 public class GuildListener implements Listener {
 
     private final GuildPlugin plugin;
@@ -15,41 +18,68 @@ public class GuildListener implements Listener {
         this.plugin = plugin;
     }
 
-    @EventHandler
-    public void onJoin(PlayerJoinEvent event) {
-        Player player = event.getPlayer();
-        Guild guild = plugin.getGuildManager().getGuildOf(player.getUniqueId());
-        if (guild == null) {
-            return;
-        }
+    private boolean suppress() {
+        return plugin.getConfig().getBoolean("settings.suppress-public-join-quit", true);
+    }
 
-        GuildMember member = guild.getMember(player.getUniqueId());
-        if (member != null && !member.getName().equals(player.getName())) {
-            member.setName(player.getName()); // name change
+    @EventHandler(priority = EventPriority.HIGH)
+    public void onJoin(PlayerJoinEvent e) {
+        Player p = e.getPlayer();
+        Guild g = plugin.getGuildManager().getGuild(p.getUniqueId());
+        if (g == null) return; // players without a guild keep the normal join message
+
+        if (!p.getName().equals(g.getMemberName(p.getUniqueId()))) { // name change
+            g.setMemberName(p.getUniqueId(), p.getName());
             plugin.getGuildManager().save();
         }
-        notifyOthers(guild, player, "&ajoined.");
+        plugin.getTabManager().apply(p);
+
+        if (suppress()) e.setJoinMessage(null); // hide the public message
+
+        String fmt = plugin.getConfig().getString("formats.member-join", "&2Guild > &a%player% &ejoined the Server!");
+        plugin.broadcastExcept(g, Msg.color(fmt.replace("%player%", p.getName())), p.getUniqueId());
     }
 
-    @EventHandler
-    public void onQuit(PlayerQuitEvent event) {
-        Player player = event.getPlayer();
-        Guild guild = plugin.getGuildManager().getGuildOf(player.getUniqueId());
-        if (guild == null) {
-            return;
-        }
-        notifyOthers(guild, player, "&cleft.");
+    @EventHandler(priority = EventPriority.HIGH)
+    public void onQuit(PlayerQuitEvent e) {
+        Player p = e.getPlayer();
+        plugin.getChatToggled().remove(p.getUniqueId());
+        Guild g = plugin.getGuildManager().getGuild(p.getUniqueId());
+        plugin.getTabManager().remove(p);
+        if (g == null) return;
+
+        if (suppress()) e.setQuitMessage(null);
+
+        String fmt = plugin.getConfig().getString("formats.member-quit", "&2Guild > &a%player% &eleft the Server!");
+        plugin.broadcastExcept(g, Msg.color(fmt.replace("%player%", p.getName())), p.getUniqueId());
     }
 
-    private void notifyOthers(Guild guild, Player who, String action) {
-        if (!plugin.getConfig().getBoolean("join-leave-messages", true)) {
-            return;
+    @EventHandler(priority = EventPriority.HIGH)
+    public void onKick(PlayerKickEvent e) {
+        // The matching PlayerQuitEvent still fires and handles the guild notification.
+        if (suppress() && plugin.getGuildManager().getGuild(e.getPlayer().getUniqueId()) != null) {
+            e.setLeaveMessage(null);
         }
-        String line = GuildPlugin.color("&2Guild > &e" + who.getName() + " " + action);
-        for (Player other : guild.getOnlinePlayers()) {
-            if (!other.getUniqueId().equals(who.getUniqueId())) {
-                other.sendMessage(line);
+    }
+
+    /** Redirects chat to the guild while guild-chat mode is toggled on. */
+    @EventHandler(priority = EventPriority.LOWEST)
+    public void onChat(AsyncPlayerChatEvent e) {
+        final Player p = e.getPlayer();
+        if (!plugin.getChatToggled().contains(p.getUniqueId())) return;
+
+        e.setCancelled(true);
+        final String msg = e.getMessage();
+        Bukkit.getScheduler().runTask(plugin, new Runnable() {
+            @Override
+            public void run() {
+                if (plugin.getGuildManager().getGuild(p.getUniqueId()) == null) {
+                    plugin.getChatToggled().remove(p.getUniqueId());
+                    Msg.error(p, "You are no longer in a guild - guild chat mode disabled.");
+                } else {
+                    plugin.sendGuildChat(p, msg);
+                }
             }
-        }
+        });
     }
 }

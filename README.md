@@ -1,25 +1,27 @@
-# Guilds
+# GuildPlugin (Spigot / Paper 1.8.8)
 
-Hypixel-style guild plugin for Spigot / Paper 1.8.8 with custom ranks, guild chat and PlaceholderAPI support.
+Hypixel-style guilds: custom ranks, guild chat, color GUI (&0-&f), tab settings GUI,
+PlaceholderAPI expansion, `guilds.yml` storage.
 
-## Getting the jar (no commands needed)
+## Automatic build (no manual commands)
+1. Create a new GitHub repository and upload / push all files of this project.
+2. Open the **Actions** tab. The *Build GuildPlugin* workflow runs automatically on every push.
+3. Open the finished run and download the **GuildPlugin** artifact (contains `GuildPlugin.jar`).
+4. Drop the jar into your server's `plugins/` folder.
 
-1. Create an empty repository on GitHub and upload / push the contents of this folder.
-2. Open the **Actions** tab. The **Build** workflow runs automatically on every push.
-3. Open the finished run and download **Guilds-jar** from *Artifacts*. Put `Guilds.jar` in your server's `plugins/` folder.
+### Make a downloadable Release
+Create a tag and push it - the workflow publishes the jar under **Releases**:
+```
+git tag v1.0.0
+git push origin v1.0.0
+```
+(Or on GitHub: Releases -> Draft a new release -> create tag `v1.0.0`.)
 
-### Publishing a release
-Push a tag such as `v1.0.0` (or run the **Release** workflow from the Actions tab and type a tag).
-The jar is attached to a GitHub Release automatically.
-
-## Commands
-`/g` and `/guild`: `create`, `disband`, `invite`, `join`, `chat`, `createrank`, `deleterank`, `promote`, `demote`, `leave`, `kick`, `list`, `info`, `transfer`, `help`. `/gc <message>` sends guild chat.
+You can also start a build any time via Actions -> Build GuildPlugin -> **Run workflow**.
 
 ## Placeholders
-`%guild_name%`, `%guild_tag%`, `%guild_rank%`, `%guild_master%`, `%guild_members%`, `%guild_online%`, `%guild_max_members%`, `%guild_in_guild%`, `%guild_is_master%`
+`%guild_name%` `%guild_name_colored%` `%guild_rank%` `%guild_color%` `%guild_color_code%`
+`%guild_prefix%` `%guild_tab%` `%guild_master%` `%guild_members%` `%guild_online%` `%guild_has%`
 
-## Permissions
-`guild.use` (default true), `guild.create` (default true), `guild.chat.color` (op), `guild.admin` (op)
-
-## Java version
-Compiles with JDK 17 by default. If your 1.8.8 server runs on Java 8, set `maven.compiler.release` to `8` in `pom.xml` (the code is Java 8 compatible).
+## Commands
+`/g create|disband|invite|join|accept|chat|createrank|deleterank|ranks|promote|demote|leave|kick|list|info|transfer|color|tab|help`, `/gc <message>`

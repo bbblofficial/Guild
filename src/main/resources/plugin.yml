@@ -1,0 +1,29 @@
+name: Guilds
+version: 1.0.0
+main: com.example.guilds.GuildPlugin
+author: YourName
+description: Hypixel-style guilds with custom ranks, guild chat and PlaceholderAPI support.
+softdepend: [PlaceholderAPI]
+
+commands:
+  guild:
+    description: Main guild command.
+    aliases: [g]
+    usage: /<command> help
+  gc:
+    description: Send a message to your guild chat.
+    usage: /<command> <message>
+
+permissions:
+  guild.use:
+    description: Allows use of the guild commands.
+    default: true
+  guild.create:
+    description: Allows creating a guild.
+    default: true
+  guild.chat.color:
+    description: Allows using & color codes in guild chat.
+    default: op
+  guild.admin:
+    description: Allows force-disbanding any guild (/g admindisband <guild>).
+    default: op

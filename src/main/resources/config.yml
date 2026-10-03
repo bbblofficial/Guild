@@ -1,0 +1,29 @@
+# Guilds configuration
+
+# Maximum number of members in one guild (including the Guild Master)
+max-members: 50
+
+# Maximum number of custom ranks a guild may create (Officer and Member do not count)
+max-custom-ranks: 8
+
+# How long an invite stays valid, in seconds
+invite-expire-seconds: 60
+
+# How long a join request (/g join without an invite) stays valid, in seconds
+request-expire-seconds: 300
+
+# Require "/g disband confirm" after "/g disband"
+require-disband-confirmation: true
+
+# Tell guild members when a fellow member joins / leaves the server
+join-leave-messages: true
+
+# Guild chat format. Placeholders: {player} {rank} {guild} {message}
+guild-chat-format: "&2Guild > &b{player} &e[{rank}]&f: {message}"
+
+# Text returned by PlaceholderAPI when the player has no guild
+placeholders:
+  no-guild-name: ""
+  no-guild-rank: ""
+  no-guild-tag: ""
+  no-guild-master: ""

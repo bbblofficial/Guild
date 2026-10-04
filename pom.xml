@@ -22,12 +22,12 @@
             <url>https://hub.spigotmc.org/nexus/content/repositories/snapshots/</url>
         </repository>
         <repository>
-            <id>sonatype</id>
-            <url>https://oss.sonatype.org/content/repositories/snapshots/</url>
+            <id>placeholderapi</id>
+            <url>https://repo.extendedclip.com/releases/</url>
         </repository>
         <repository>
-            <id>placeholderapi</id>
-            <url>https://repo.extendedclip.com/content/repositories/placeholderapi/</url>
+            <id>helpchat</id>
+            <url>https://repo.helpch.at/releases/</url>
         </repository>
     </repositories>
 
@@ -37,11 +37,25 @@
             <artifactId>spigot-api</artifactId>
             <version>1.8.8-R0.1-SNAPSHOT</version>
             <scope>provided</scope>
+            <exclusions>
+                <!-- the 1.8-SNAPSHOT of bungeecord-chat no longer exists online -->
+                <exclusion>
+                    <groupId>net.md-5</groupId>
+                    <artifactId>bungeecord-chat</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <!-- replacement from Maven Central (compile-time only; the server provides the real one) -->
+        <dependency>
+            <groupId>net.md-5</groupId>
+            <artifactId>bungeecord-chat</artifactId>
+            <version>1.16-R0.4</version>
+            <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>me.clip</groupId>
             <artifactId>placeholderapi</artifactId>
-            <version>2.10.9</version>
+            <version>2.11.6</version>
             <scope>provided</scope>
         </dependency>
     </dependencies>
